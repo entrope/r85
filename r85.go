@@ -182,10 +182,10 @@ func Decode(dst, src []byte) (ndst, nsrc int, err error) {
 			return len(dst), si, nil
 		}
 		// Use uint64 because 85^5 = 4,437,053,125 > 2^32.
-		acc := uint64(block[0])
-		for k := 1; k < 5; k++ {
-			acc = acc*85 + uint64(block[k])
-		}
+		acc := uint64(block[0])*85 + uint64(block[1])
+		acc = acc*85 + uint64(block[2])
+		acc = acc*85 + uint64(block[3])
+		acc = acc*85 + uint64(block[4])
 		if acc > 0xFFFFFFFF {
 			return di, si, CorruptInputError{"value overflow in 5-character block"}
 		}
@@ -252,6 +252,8 @@ type encoder struct {
 	w   io.Writer
 	buf [4]byte
 	n   int
+	out [4096]byte
+	on  int
 	err error
 }
 
@@ -272,28 +274,31 @@ func (e *encoder) Write(p []byte) (int, error) {
 		if e.n < 4 {
 			return written, nil
 		}
-		var out [5]byte
-		Encode(out[:], e.buf[:])
-		_, e.err = e.w.Write(out[:])
+		e.on += Encode(e.out[e.on:], e.buf[:])
 		e.n = 0
-		if e.err != nil {
-			return written, e.err
-		}
 	}
 
-	// Encode full 4-byte blocks directly from p.
+	// Encode directly from p into the output buffer, flushing as needed.
 	for len(p) >= 4 {
-		var out [5]byte
-		Encode(out[:], p[:4])
-		_, e.err = e.w.Write(out[:])
-		if e.err != nil {
-			return written, e.err
+		if e.on+5 > len(e.out) {
+			if e.err = e.flush(); e.err != nil {
+				return written, e.err
+			}
 		}
-		p = p[4:]
-		written += 4
+		// Encode as many full blocks as fit in the remaining output buffer.
+		// Each 4 input bytes produce 5 output bytes.
+		outAvail := len(e.out) - e.on
+		maxIn := (outAvail / 5) * 4
+		if maxIn > len(p) {
+			// Round down to a 4-byte boundary so we only encode full blocks.
+			maxIn = len(p) &^ 3
+		}
+		e.on += Encode(e.out[e.on:], p[:maxIn])
+		p = p[maxIn:]
+		written += maxIn
 	}
 
-	// Buffer remaining bytes.
+	// Buffer remaining 0–3 bytes.
 	for len(p) > 0 {
 		e.buf[e.n] = p[0]
 		e.n++
@@ -304,17 +309,23 @@ func (e *encoder) Write(p []byte) (int, error) {
 	return written, nil
 }
 
+func (e *encoder) flush() error {
+	if e.on > 0 {
+		_, e.err = e.w.Write(e.out[:e.on])
+		e.on = 0
+	}
+	return e.err
+}
+
 func (e *encoder) Close() error {
 	if e.err != nil {
 		return e.err
 	}
 	if e.n > 0 {
-		var out [5]byte
-		n := Encode(out[:], e.buf[:e.n])
-		_, e.err = e.w.Write(out[:n])
+		e.on += Encode(e.out[e.on:], e.buf[:e.n])
 		e.n = 0
 	}
-	return e.err
+	return e.flush()
 }
 
 // NewDecoder wraps a buffer and io.Reader interface around Decode.
