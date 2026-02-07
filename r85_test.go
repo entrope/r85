@@ -141,7 +141,14 @@ func TestDecodeSkipsInvalidChars(t *testing.T) {
 func TestDecodeSingleCharError(t *testing.T) {
 	_, _, err := Decode(make([]byte, 10), []byte("("))
 	if err == nil {
-		t.Error("Decode single char: expected error, got nil")
+		t.Fatal("Decode single char: expected error, got nil")
+	}
+	ce, ok := err.(CorruptInputError)
+	if !ok {
+		t.Fatalf("Decode single char: expected CorruptInputError, got %T", err)
+	}
+	if ce.Reason != "incomplete block: single trailing character" {
+		t.Errorf("Decode single char: Reason = %q", ce.Reason)
 	}
 }
 
@@ -155,7 +162,12 @@ func TestDecodeOverflow(t *testing.T) {
 	dec := make([]byte, 10)
 	_, _, err := Decode(dec, []byte("+)"))
 	if err == nil {
-		t.Error("Decode overflow 2-char: expected error, got nil")
+		t.Fatal("Decode overflow 2-char: expected error, got nil")
+	}
+	if ce, ok := err.(CorruptInputError); !ok {
+		t.Fatalf("Decode overflow 2-char: expected CorruptInputError, got %T", err)
+	} else if ce.Reason != "value overflow in trailing block" {
+		t.Errorf("Decode overflow 2-char: Reason = %q", ce.Reason)
 	}
 
 	// For 5-char block, max uint32 is 4294967295.
@@ -168,7 +180,12 @@ func TestDecodeOverflow(t *testing.T) {
 	}
 	_, _, err = Decode(dec, allMax)
 	if err == nil {
-		t.Error("Decode overflow 5-char: expected error, got nil")
+		t.Fatal("Decode overflow 5-char: expected error, got nil")
+	}
+	if ce, ok := err.(CorruptInputError); !ok {
+		t.Fatalf("Decode overflow 5-char: expected CorruptInputError, got %T", err)
+	} else if ce.Reason != "value overflow in 5-character block" {
+		t.Errorf("Decode overflow 5-char: Reason = %q", ce.Reason)
 	}
 }
 
@@ -257,5 +274,85 @@ func TestEncodeDstTooShort(t *testing.T) {
 	n := Encode(dst, src)
 	if n != 5 {
 		t.Errorf("Encode with short dst: n = %d, want 5", n)
+	}
+}
+
+// TestMaxDecodedLen verifies the inverse length function.
+func TestMaxDecodedLen(t *testing.T) {
+	tests := []struct {
+		n, want int
+	}{
+		{0, 0},
+		{1, 0}, // 1 char is not a valid block, but max possible decoded is 0
+		{2, 1},
+		{3, 2},
+		{4, 3},
+		{5, 4},
+		{6, 4}, // 5+1: the trailing 1 can't form a block
+		{7, 5},
+		{10, 8},
+		{125, 100},
+	}
+	for _, tt := range tests {
+		got := MaxDecodedLen(tt.n)
+		if got != tt.want {
+			t.Errorf("MaxDecodedLen(%d) = %d, want %d", tt.n, got, tt.want)
+		}
+	}
+}
+
+// TestMaxDecodedLenConsistency verifies MaxDecodedLen(MaxEncodedLen(n)) >= n.
+func TestMaxDecodedLenConsistency(t *testing.T) {
+	for n := range 200 {
+		enc := MaxEncodedLen(n)
+		dec := MaxDecodedLen(enc)
+		if dec < n {
+			t.Errorf("MaxDecodedLen(MaxEncodedLen(%d)) = %d, want >= %d", n, dec, n)
+		}
+	}
+}
+
+// TestEncodeToString tests the convenience encoder.
+func TestEncodeToString(t *testing.T) {
+	src := []byte{0, 1, 2, 3}
+	got := EncodeToString(src)
+	// Verify by decoding back.
+	dec := make([]byte, 4)
+	ndst, _, err := Decode(dec, []byte(got))
+	if err != nil {
+		t.Fatalf("EncodeToString roundtrip: err = %v", err)
+	}
+	if !bytes.Equal(dec[:ndst], src) {
+		t.Errorf("EncodeToString roundtrip: got %v, want %v", dec[:ndst], src)
+	}
+}
+
+// TestDecodeString tests the convenience decoder.
+func TestDecodeString(t *testing.T) {
+	src := []byte("Hello!")
+	encoded := EncodeToString(src)
+	got, err := DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("DecodeString: err = %v", err)
+	}
+	if !bytes.Equal(got, src) {
+		t.Errorf("DecodeString: got %q, want %q", got, src)
+	}
+}
+
+// TestDecodeStringError tests that DecodeString returns errors.
+func TestDecodeStringError(t *testing.T) {
+	_, err := DecodeString("(")
+	if err == nil {
+		t.Error("DecodeString single char: expected error, got nil")
+	}
+}
+
+// TestCorruptInputErrorMessage tests the error message format.
+func TestCorruptInputErrorMessage(t *testing.T) {
+	err := CorruptInputError{Reason: "test reason"}
+	want := "r85: test reason"
+	if err.Error() != want {
+		t.Errorf("CorruptInputError.Error() = %q, want %q", err.Error(), want)
 	}
 }

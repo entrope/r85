@@ -11,6 +11,17 @@ func MaxEncodedLen(n int) int {
 	return res
 }
 
+// MaxDecodedLen returns the maximum length of a decoding of n source bytes.
+// The actual decoded length may be smaller if the input contains characters
+// outside the r85 alphabet (which are skipped during decoding).
+func MaxDecodedLen(n int) int {
+	res := 4 * (n / 5)
+	if r := n % 5; r >= 2 {
+		res += r - 1
+	}
+	return res
+}
+
 // encByte maps an r85 digit value (0–84) to its encoded byte.
 // The base alphabet starts at '(' (40).  Two characters are replaced:
 // '<' (40+20=60) -> '}' (125), and '`' (40+56=96) -> '~' (126).
@@ -88,32 +99,55 @@ func Encode(dst, src []byte) int {
 	}
 
 	// Handle trailing 1–3 bytes.
-	rem := len(src) - si
-	if rem == 0 {
-		return di
-	}
-	outLen := rem + 1 // 1->2, 2->3, 3->4
-	if di+outLen > len(dst) {
-		return len(dst)
-	}
-
-	var acc uint32
-	switch rem {
+	switch len(src) - si {
 	case 1:
-		acc = uint32(src[si])
+		if di+2 > len(dst) {
+			return len(dst)
+		}
+		acc := uint32(src[si])
+		dst[di+1] = encByte(byte(acc % 85))
+		dst[di+0] = encByte(byte(acc / 85))
+		di += 2
 	case 2:
-		acc = uint32(src[si])<<8 | uint32(src[si+1])
-	case 3:
-		acc = uint32(src[si])<<16 | uint32(src[si+1])<<8 | uint32(src[si+2])
-	}
-
-	for i := outLen - 1; i >= 0; i-- {
-		dst[di+i] = encByte(byte(acc % 85))
+		if di+3 > len(dst) {
+			return len(dst)
+		}
+		acc := uint32(src[si])<<8 | uint32(src[si+1])
+		dst[di+2] = encByte(byte(acc % 85))
 		acc /= 85
+		dst[di+1] = encByte(byte(acc % 85))
+		dst[di+0] = encByte(byte(acc / 85))
+		di += 3
+	case 3:
+		if di+4 > len(dst) {
+			return len(dst)
+		}
+		acc := uint32(src[si])<<16 | uint32(src[si+1])<<8 | uint32(src[si+2])
+		dst[di+3] = encByte(byte(acc % 85))
+		acc /= 85
+		dst[di+2] = encByte(byte(acc % 85))
+		acc /= 85
+		dst[di+1] = encByte(byte(acc % 85))
+		dst[di+0] = encByte(byte(acc / 85))
+		di += 4
 	}
-	di += outLen
 
 	return di
+}
+
+// EncodeToString returns the r85 encoding of src as a string.
+func EncodeToString(src []byte) string {
+	dst := make([]byte, MaxEncodedLen(len(src)))
+	n := Encode(dst, src)
+	return string(dst[:n])
+}
+
+// DecodeString returns the bytes represented by the r85 string s.
+func DecodeString(s string) ([]byte, error) {
+	src := []byte(s)
+	dst := make([]byte, MaxDecodedLen(len(src)))
+	ndst, _, err := Decode(dst, src)
+	return dst[:ndst], err
 }
 
 // Decode decodes text src into binary dst.
@@ -153,7 +187,7 @@ func Decode(dst, src []byte) (ndst, nsrc int, err error) {
 			acc = acc*85 + uint64(block[k])
 		}
 		if acc > 0xFFFFFFFF {
-			return di, si, CorruptInputError{}
+			return di, si, CorruptInputError{"value overflow in 5-character block"}
 		}
 		dst[di+0] = byte(acc >> 24)
 		dst[di+1] = byte(acc >> 16)
@@ -168,7 +202,7 @@ func Decode(dst, src []byte) (ndst, nsrc int, err error) {
 		return di, si, nil
 	}
 	if bi == 1 {
-		return di, si, CorruptInputError{}
+		return di, si, CorruptInputError{"incomplete block: single trailing character"}
 	}
 
 	// bi is 2, 3, or 4 -> 1, 2, or 3 output bytes.
@@ -184,7 +218,7 @@ func Decode(dst, src []byte) (ndst, nsrc int, err error) {
 
 	maxVal := [3]uint32{0xFF, 0xFFFF, 0xFFFFFF}
 	if acc > maxVal[outLen-1] {
-		return di, si, CorruptInputError{}
+		return di, si, CorruptInputError{"value overflow in trailing block"}
 	}
 
 	for i := outLen - 1; i >= 0; i-- {
@@ -273,6 +307,13 @@ func (e *encoder) Close() error {
 }
 
 // NewDecoder wraps a buffer and io.Reader interface around Decode.
+//
+// The decoder handles the case where the underlying reader delivers data
+// at arbitrary byte boundaries that may split an encoded block.  It
+// carries incomplete blocks (1–4 valid r85 digits) across Read calls
+// and only treats them as a final partial block when the underlying
+// reader returns io.EOF (or another error).  A single trailing r85
+// digit at true EOF is reported as a CorruptInputError.
 func NewDecoder(r io.Reader) io.Reader {
 	return &decoder{r: r}
 }
@@ -368,8 +409,13 @@ func (d *decoder) Read(p []byte) (int, error) {
 	return 0, d.err
 }
 
-type CorruptInputError struct{}
+// CorruptInputError is returned by [Decode] and [DecodeString] when the
+// input is not valid r85 text.
+type CorruptInputError struct {
+	// Reason describes why decoding failed.
+	Reason string
+}
 
 func (e CorruptInputError) Error() string {
-	return "invalid input length"
+	return "r85: " + e.Reason
 }
