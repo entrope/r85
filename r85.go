@@ -198,34 +198,45 @@ func Decode(dst, src []byte) (ndst, nsrc int, err error) {
 	}
 
 	// Handle trailing block.
-	if bi == 0 {
+	switch bi {
+	case 0:
 		return di, si, nil
-	}
-	if bi == 1 {
+	case 1:
 		return di, si, CorruptInputError{"incomplete block: single trailing character"}
+	case 2: // 2 chars -> 1 byte
+		if di+1 > len(dst) {
+			return len(dst), si, nil
+		}
+		acc := uint32(block[0])*85 + uint32(block[1])
+		if acc > 0xFF {
+			return di, si, CorruptInputError{"value overflow in trailing block"}
+		}
+		dst[di] = byte(acc)
+		di++
+	case 3: // 3 chars -> 2 bytes
+		if di+2 > len(dst) {
+			return len(dst), si, nil
+		}
+		acc := (uint32(block[0])*85+uint32(block[1]))*85 + uint32(block[2])
+		if acc > 0xFFFF {
+			return di, si, CorruptInputError{"value overflow in trailing block"}
+		}
+		dst[di+0] = byte(acc >> 8)
+		dst[di+1] = byte(acc)
+		di += 2
+	case 4: // 4 chars -> 3 bytes
+		if di+3 > len(dst) {
+			return len(dst), si, nil
+		}
+		acc := ((uint32(block[0])*85+uint32(block[1]))*85+uint32(block[2]))*85 + uint32(block[3])
+		if acc > 0xFFFFFF {
+			return di, si, CorruptInputError{"value overflow in trailing block"}
+		}
+		dst[di+0] = byte(acc >> 16)
+		dst[di+1] = byte(acc >> 8)
+		dst[di+2] = byte(acc)
+		di += 3
 	}
-
-	// bi is 2, 3, or 4 -> 1, 2, or 3 output bytes.
-	outLen := bi - 1
-	if di+outLen > len(dst) {
-		return len(dst), si, nil
-	}
-
-	var acc uint32
-	for k := 0; k < bi; k++ {
-		acc = acc*85 + uint32(block[k])
-	}
-
-	maxVal := [3]uint32{0xFF, 0xFFFF, 0xFFFFFF}
-	if acc > maxVal[outLen-1] {
-		return di, si, CorruptInputError{"value overflow in trailing block"}
-	}
-
-	for i := outLen - 1; i >= 0; i-- {
-		dst[di+i] = byte(acc)
-		acc >>= 8
-	}
-	di += outLen
 
 	return di, si, nil
 }
