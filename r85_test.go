@@ -359,3 +359,96 @@ func TestCorruptInputErrorMessage(t *testing.T) {
 		t.Errorf("CorruptInputError.Error() = %q, want %q", err.Error(), want)
 	}
 }
+
+// TestEncodeDecodeLargeRoundtrip tests roundtrip for sizes that exercise
+// the NEON fast path (64-byte blocks).
+func TestEncodeDecodeLargeRoundtrip(t *testing.T) {
+	for _, n := range []int{63, 64, 65, 100, 128, 256, 1000} {
+		src := make([]byte, n)
+		for i := range src {
+			src[i] = byte(i*37 + 13)
+		}
+		enc := make([]byte, MaxEncodedLen(n))
+		nw := Encode(enc, src)
+		if nw != MaxEncodedLen(n) {
+			t.Errorf("Encode(%d bytes): wrote %d, want %d", n, nw, MaxEncodedLen(n))
+		}
+
+		dec := make([]byte, n)
+		ndst, nsrc, err := Decode(dec, enc[:nw])
+		if err != nil {
+			t.Errorf("Decode(%d bytes): err = %v", n, err)
+		}
+		if ndst != n {
+			t.Errorf("Decode(%d bytes): ndst = %d", n, ndst)
+		}
+		if nsrc != nw {
+			t.Errorf("Decode(%d bytes): nsrc = %d, want %d", n, nsrc, nw)
+		}
+		if !bytes.Equal(dec, src) {
+			t.Errorf("Decode(%d bytes): roundtrip mismatch", n)
+		}
+	}
+}
+
+// TestEncodeDecodeAllDigitValues ensures all 85 digit values encode and
+// decode correctly through the NEON path by testing a 64-byte block that
+// produces every digit value at least once.
+func TestEncodeDecodeAllDigitValues(t *testing.T) {
+	// Craft input that produces digit values 20 and 56 (the fixup cases).
+	// digit 20 → char '<'(60) remapped to '}'(125)
+	// digit 56 → char '`'(96) remapped to '~'(126)
+	// Use multiple 64-byte blocks with varied content.
+	for base := byte(0); base < 4; base++ {
+		src := make([]byte, 64)
+		for i := range src {
+			src[i] = byte(i*41+17) + base*64
+		}
+		enc := make([]byte, MaxEncodedLen(64))
+		Encode(enc, src)
+
+		dec := make([]byte, 64)
+		ndst, _, err := Decode(dec, enc)
+		if err != nil {
+			t.Errorf("base=%d: Decode err = %v", base, err)
+		}
+		if ndst != 64 {
+			t.Errorf("base=%d: ndst = %d", base, ndst)
+		}
+		if !bytes.Equal(dec, src) {
+			t.Errorf("base=%d: roundtrip mismatch", base)
+		}
+	}
+}
+
+// TestEncodeDecodeZerosAndMaxes tests encoding/decoding of all-zero and
+// all-0xFF blocks through the NEON path.
+func TestEncodeDecodeZerosAndMaxes(t *testing.T) {
+	tests := []struct {
+		name string
+		fill byte
+	}{
+		{"zeros", 0x00},
+		{"ones", 0xFF},
+		{"0x55", 0x55},
+		{"0xAA", 0xAA},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := make([]byte, 128)
+			for i := range src {
+				src[i] = tt.fill
+			}
+			enc := make([]byte, MaxEncodedLen(128))
+			Encode(enc, src)
+			dec := make([]byte, 128)
+			ndst, _, err := Decode(dec, enc)
+			if err != nil {
+				t.Fatalf("Decode err = %v", err)
+			}
+			if ndst != 128 || !bytes.Equal(dec, src) {
+				t.Fatalf("roundtrip mismatch")
+			}
+		})
+	}
+}

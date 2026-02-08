@@ -82,6 +82,15 @@ func Encode(dst, src []byte) int {
 	di := 0
 	si := 0
 
+	// NEON fast path: process 64-byte blocks.
+	if haveNEON {
+		for si+64 <= len(src) && di+80 <= len(dst) {
+			encodeBlocksNEON(&dst[di], &src[si])
+			di += 80
+			si += 64
+		}
+	}
+
 	// Process full 4-byte blocks.
 	for si+4 <= len(src) {
 		if di+5 > len(dst) {
@@ -159,9 +168,36 @@ func DecodeString(s string) ([]byte, error) {
 // skipped bytes.
 // If dst is too short, Decode fills dst and returns len(dst),
 // and ignores the remaining input.
+// allValidR85 reports whether all bytes in b are valid r85 characters
+// (in the range [40, 126]).
+func allValidR85(b []byte) bool {
+	for _, c := range b {
+		if c < 40 || c > 126 {
+			return false
+		}
+	}
+	return true
+}
+
 func Decode(dst, src []byte) (ndst, nsrc int, err error) {
 	di := 0
 	si := 0
+
+	// NEON fast path: process runs of 80 valid r85 bytes.
+	if haveNEON {
+		for di+64 <= len(dst) && si+80 <= len(src) {
+			if !allValidR85(src[si : si+80]) {
+				break
+			}
+			ovf := decodeBlocksNEON(&dst[di], &src[si])
+			if ovf != 0 {
+				// Overflow detected; fall through to scalar for error reporting.
+				break
+			}
+			di += 64
+			si += 80
+		}
+	}
 
 	// Collect valid characters into a block buffer.
 	var block [5]byte
