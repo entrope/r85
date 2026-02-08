@@ -48,6 +48,9 @@ func TestDecByteInvalid(t *testing.T) {
 	for i := range 85 {
 		valid[encByte(byte(i))] = true
 	}
+	// '<' and '`' are also accepted as aliases for '}' and '~'.
+	valid['<'] = true
+	valid['`'] = true
 	for b := range 256 {
 		_, ok := decByte(byte(b))
 		if valid[byte(b)] {
