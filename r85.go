@@ -82,10 +82,10 @@ func Encode(dst, src []byte) int {
 	di := 0
 	si := 0
 
-	// NEON fast path: process 64-byte blocks.
-	if haveNEON {
+	// SIMD fast path: process 64-byte blocks.
+	if haveSIMD {
 		for si+64 <= len(src) && di+80 <= len(dst) {
-			encodeBlocksNEON(&dst[di], &src[si])
+			encodeBlocksSIMD(&dst[di], &src[si])
 			di += 80
 			si += 64
 		}
@@ -183,13 +183,13 @@ func Decode(dst, src []byte) (ndst, nsrc int, err error) {
 	di := 0
 	si := 0
 
-	// NEON fast path: process runs of 80 valid r85 bytes.
-	if haveNEON {
+	// SIMD fast path: process runs of 80 valid r85 bytes.
+	if haveSIMD {
 		for di+64 <= len(dst) && si+80 <= len(src) {
 			if !allValidR85(src[si : si+80]) {
 				break
 			}
-			ovf := decodeBlocksNEON(&dst[di], &src[si])
+			ovf := decodeBlocksSIMD(&dst[di], &src[si])
 			if ovf != 0 {
 				// Overflow detected; fall through to scalar for error reporting.
 				break
