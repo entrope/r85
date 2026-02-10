@@ -35,7 +35,7 @@ Single-package library:
 
 ## Key Design Details
 
-- Encoding: 4 bytes -> 5 chars (big-endian); partial trailing blocks (1-3 bytes) produce 2-4 chars
+- Encoding: 4 bytes -> 5 chars (little-endian); partial trailing blocks (1-3 bytes) produce 2-4 chars; truncated output is a prefix of the untruncated output
 - Decoding: skips characters outside the r85 alphabet; accepts both canonical (`}`, `~`) and unescaped (`<`, `` ` ``) forms
 - Streaming encoder buffers internally (4096-byte output buffer) and only writes partial blocks on `Close()`
 - Streaming decoder carries incomplete blocks across `Read` calls
@@ -77,10 +77,10 @@ Decode: `digit = char - 40`, then fixup value 85 (subtract 65 → 20) and value 
 ### ARM64 NEON Implementation (complete)
 
 Each call processes 4 chunks of 16/20 bytes (4 uint32 lanes per 128-bit register):
-- **Encode**: VREV32 byte-swap → 4 rounds of UMULL/VUZP2/VUSHR/MLS for div-85 → XTN narrowing chain → VTBL stride-5 interleave → VCMEQ+VADD char fixup
-- **Decode**: VSUB+VCMEQ char-to-digit → VTBL deinterleave → VUXTL widening → 3× VMUL+VADD Horner steps (32-bit) → UMULL final step (64-bit, overflow check) → XTN+VREV32 byte-swap
+- **Encode**: 4 rounds of UMULL/VUZP2/VUSHR/MLS for div-85 → XTN narrowing chain → VTBL stride-5 interleave (LSB digit first) → VCMEQ+VADD char fixup
+- **Decode**: VSUB+VCMEQ char-to-digit → VTBL deinterleave → VUXTL widening → 3× VMUL+VADD Horner steps (32-bit, MSB→LSB) → UMULL final step (64-bit, overflow check) → XTN
 
-### x86-64 AVX2 Implementation (complete, tested on Zen 2)
+### x86-64 AVX2 Implementation (complete)
 
 **Encode** uses YMM (256-bit): 2 iterations × 8 uint32 lanes.
 **Decode** uses XMM (128-bit): 4 iterations × 4 uint32 lanes.
@@ -97,8 +97,8 @@ Benchmarks on AMD Ryzen Threadripper 3960X (Zen 2, 3.8 GHz):
 
 | Operation | Scalar (purego) | AVX2 SIMD | Speedup |
 |-----------|----------------|-----------|---------|
-| Encode    | ~900 MB/s      | ~3,130 MB/s | 3.5×  |
-| Decode    | ~520 MB/s      | ~1,035 MB/s | 2.0×  |
+| Encode    | ~880 MB/s      | ~3,350 MB/s | 3.8×  |
+| Decode    | ~520 MB/s      | ~1,340 MB/s | 2.6×  |
 
 ### x86-64 AVX-512 (stub only — TODO)
 

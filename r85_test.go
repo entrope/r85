@@ -102,9 +102,9 @@ func TestEncodeKnownValues(t *testing.T) {
 		input []byte
 		want  string
 	}{
-		{[]byte{0}, "(("}, // 0 -> value 0 -> '(' '('
-		{[]byte{0, 0, 0, 0}, "((((("}, // 0x00000000 -> 5 * '('
-		{[]byte{0xFF, 0xFF, 0xFF, 0xFF}, "z?^4("}, // 2^32-1 = 4294967295
+		{[]byte{0}, "(("},                         // 0 -> value 0 -> '(' '('
+		{[]byte{0, 0, 0, 0}, "((((("},             // 0x00000000 -> 5 * '('
+		{[]byte{0xFF, 0xFF, 0xFF, 0xFF}, "(4^?z"}, // 2^32-1 = 4294967295
 	}
 	for _, tt := range tests {
 		enc := make([]byte, MaxEncodedLen(len(tt.input)))
@@ -157,13 +157,11 @@ func TestDecodeSingleCharError(t *testing.T) {
 
 // TestDecodeOverflow verifies overflow detection.
 func TestDecodeOverflow(t *testing.T) {
-	// For a 2-char block, max valid is value 255 = 2*85+84+1? No.
-	// 255 = 2*85 + 85 = 3*85. Wait: 255 in base 85 is 3*85+0 = (3)(0).
-	// encByte(3)='+', encByte(0)='('.  So "+(" should decode to [255].
-	// Let's try a value of 256 = 3*85+1 = (3)(1).
-	// encByte(3)='+', encByte(1)=')'. So "+)" should be overflow for 2-char.
+	// For a 2-char block, decode computes: block[1]*85 + block[0].
+	// Max valid value is 255. 256 = 3*85+1, so block[0]=1, block[1]=3.
+	// encByte(1)=')', encByte(3)='+'. So ")+" should be overflow for 2-char.
 	dec := make([]byte, 10)
-	_, _, err := Decode(dec, []byte("+)"))
+	_, _, err := Decode(dec, []byte(")+"))
 	if err == nil {
 		t.Fatal("Decode overflow 2-char: expected error, got nil")
 	}
@@ -273,7 +271,7 @@ func TestMaxEncodedLen(t *testing.T) {
 // TestEncodeDstTooShort verifies truncation behavior.
 func TestEncodeDstTooShort(t *testing.T) {
 	src := []byte{1, 2, 3, 4, 5, 6, 7, 8} // needs 10 encoded bytes
-	dst := make([]byte, 5)                  // only room for one block
+	dst := make([]byte, 5)                // only room for one block
 	n := Encode(dst, src)
 	if n != 5 {
 		t.Errorf("Encode with short dst: n = %d, want 5", n)

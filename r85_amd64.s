@@ -4,13 +4,6 @@
 
 // ===== RODATA constants (32 bytes each for YMM compatibility) =====
 
-// Byte-swap: little-endian <-> big-endian uint32
-DATA bswap32<>+0(SB)/8, $0x0405060700010203
-DATA bswap32<>+8(SB)/8, $0x0C0D0E0F08090A0B
-DATA bswap32<>+16(SB)/8, $0x0405060700010203
-DATA bswap32<>+24(SB)/8, $0x0C0D0E0F08090A0B
-GLOBL bswap32<>(SB), NOPTR|RODATA, $32
-
 // Magic multiplier M = floor(2^38/85) = 0xC0C0C0C1
 DATA magic85<>+0(SB)/4, $0xC0C0C0C1
 DATA magic85<>+4(SB)/4, $0xC0C0C0C1
@@ -40,31 +33,34 @@ DATA packLow<>+16(SB)/8, $0x808080800C080400
 DATA packLow<>+24(SB)/8, $0x8080808080808080
 GLOBL packLow<>(SB), NOPTR|RODATA, $32
 
-// Encode: stride-5 interleave d0-d3, first 16 output bytes per lane
-DATA encShufMain<>+0(SB)/8, $0x090501800C080400
-DATA encShufMain<>+8(SB)/8, $0x03800E0A0602800D
-DATA encShufMain<>+16(SB)/8, $0x090501800C080400
-DATA encShufMain<>+24(SB)/8, $0x03800E0A0602800D
+// Encode: stride-5 interleave d0-d3 (LSB digit first), first 16 output bytes per lane.
+// Per-lane Y0 layout: {d0[0..3], d1[0..3], d2[0..3], d3[0..3]}.
+// Output order per group: d4, d3, d2, d1, d0 (least significant first).
+DATA encShufMain<>+0(SB)/8, $0x090D800004080C80
+DATA encShufMain<>+8(SB)/8, $0x8002060A0E800105
+DATA encShufMain<>+16(SB)/8, $0x090D800004080C80
+DATA encShufMain<>+24(SB)/8, $0x8002060A0E800105
 GLOBL encShufMain<>(SB), NOPTR|RODATA, $32
 
-// Encode: stride-5 d4 positions in first 16 output bytes per lane
-DATA encShufD4<>+0(SB)/8, $0x8080800080808080
-DATA encShufD4<>+8(SB)/8, $0x8002808080800180
-DATA encShufD4<>+16(SB)/8, $0x8080800080808080
-DATA encShufD4<>+24(SB)/8, $0x8002808080800180
+// Encode: stride-5 d4 positions in first 16 output bytes per lane (LSB digit first)
+DATA encShufD4<>+0(SB)/8, $0x8080018080808000
+DATA encShufD4<>+8(SB)/8, $0x0380808080028080
+DATA encShufD4<>+16(SB)/8, $0x8080018080808000
+DATA encShufD4<>+24(SB)/8, $0x0380808080028080
 GLOBL encShufD4<>(SB), NOPTR|RODATA, $32
 
-// Encode: stride-5 d0-d3, last 4 output bytes per lane
-DATA encShufHi<>+0(SB)/8, $0x80808080800F0B07
+// Encode: stride-5 d0-d3, last 4 output bytes per lane (LSB digit first)
+DATA encShufHi<>+0(SB)/8, $0x8080808003070B0F
 DATA encShufHi<>+8(SB)/8, $0x8080808080808080
-DATA encShufHi<>+16(SB)/8, $0x80808080800F0B07
+DATA encShufHi<>+16(SB)/8, $0x8080808003070B0F
 DATA encShufHi<>+24(SB)/8, $0x8080808080808080
 GLOBL encShufHi<>(SB), NOPTR|RODATA, $32
 
-// Encode: stride-5 d4, last 4 output bytes per lane
-DATA encShufD4Hi<>+0(SB)/8, $0x8080808003808080
+// Encode: stride-5 d4, last 4 output bytes per lane (LSB digit first).
+// No d4 digits in the last 4 output positions; all 0x80 (zeros).
+DATA encShufD4Hi<>+0(SB)/8, $0x8080808080808080
 DATA encShufD4Hi<>+8(SB)/8, $0x8080808080808080
-DATA encShufD4Hi<>+16(SB)/8, $0x8080808003808080
+DATA encShufD4Hi<>+16(SB)/8, $0x8080808080808080
 DATA encShufD4Hi<>+24(SB)/8, $0x8080808080808080
 GLOBL encShufD4Hi<>(SB), NOPTR|RODATA, $32
 
@@ -111,20 +107,27 @@ DATA const86b<>+16(SB)/8, $0x5656565656565656
 DATA const86b<>+24(SB)/8, $0x5656565656565656
 GLOBL const86b<>(SB), NOPTR|RODATA, $32
 
-// Decode-only masks (16 bytes, used with XMM only)
-DATA decShufMain<>+0(SB)/8, $0x800B06010F0A0500
-DATA decShufMain<>+8(SB)/8, $0x800D0803800C0702
+// Decode-only masks (16 bytes, used with XMM only).
+// Little-endian stride-5 input: d4 at 0,5,10,15; d3 at 1,6,11,16;
+// d2 at 2,7,12,17; d1 at 3,8,13,18; d0 at 4,9,14,19.
+// X0 holds bytes 0-15, X4 holds bytes 16-19.
+// Output: {d0[0..3], d1[0..3], d2[0..3], d3[0..3]}.
+DATA decShufMain<>+0(SB)/8, $0x800D0803800E0904
+DATA decShufMain<>+8(SB)/8, $0x800B0601800C0702
 GLOBL decShufMain<>(SB), NOPTR|RODATA, $16
 
-DATA decShufFill<>+0(SB)/8, $0x0080808080808080
-DATA decShufFill<>+8(SB)/8, $0x0280808001808080
+// Fill d0[3],d1[3],d2[3],d3[3] from X4 (bytes 16-19 = d3[3],d2[3],d1[3],d0[3]).
+DATA decShufFill<>+0(SB)/8, $0x0280808003808080
+DATA decShufFill<>+8(SB)/8, $0x0080808001808080
 GLOBL decShufFill<>(SB), NOPTR|RODATA, $16
 
-DATA decShufD4<>+0(SB)/8, $0x80808080800E0904
+// Extract d4[0..3] from X0 (positions 0,5,10,15 — all within X0).
+DATA decShufD4<>+0(SB)/8, $0x808080800F0A0500
 DATA decShufD4<>+8(SB)/8, $0x8080808080808080
 GLOBL decShufD4<>(SB), NOPTR|RODATA, $16
 
-DATA decShufD4Fill<>+0(SB)/8, $0x8080808003808080
+// No d4 values in X4; all 0x80 (zeros).
+DATA decShufD4Fill<>+0(SB)/8, $0x8080808080808080
 DATA decShufD4Fill<>+8(SB)/8, $0x8080808080808080
 GLOBL decShufD4Fill<>(SB), NOPTR|RODATA, $16
 
@@ -192,16 +195,14 @@ TEXT ·encodeBlocksAVX2(SB), NOSPLIT|NOFRAME, $0-16
 	MOVQ	dst+0(FP), DI
 	MOVQ	src+8(FP), SI
 
-	VMOVDQU	bswap32<>(SB), Y11
 	VMOVDQU	magic85<>(SB), Y12
 	VMOVDQU	const85d<>(SB), Y13
 
 	MOVQ	$2, CX
 
 enc_loop:
-	// Load 32 bytes, byte-swap to big-endian uint32s
+	// Load 32 bytes as native little-endian uint32s
 	VMOVDQU	(SI), Y0
-	VPSHUFB	Y11, Y0, Y0
 
 	// 4 rounds of div-85: value -> (d0, d1, d2, d3, d4)
 	DIV85_YMM(Y0, Y4, Y6)      // d4=Y6, q=Y4
@@ -217,7 +218,7 @@ enc_loop:
 	// Pack d4: extract low byte of each uint32
 	VPSHUFB	packLow<>(SB), Y6, Y4
 
-	// Stride-5 interleave (lane-local, same masks both lanes)
+	// Stride-5 interleave (lane-local, LSB digit first)
 	VPSHUFB	encShufMain<>(SB), Y0, Y5
 	VPSHUFB	encShufD4<>(SB), Y4, Y14
 	VPOR	Y5, Y14, Y5              // first 16 output bytes per lane
@@ -255,7 +256,6 @@ TEXT ·decodeBlocksAVX2(SB), NOSPLIT|NOFRAME, $0-24
 	MOVQ	dst+0(FP), DI
 	MOVQ	src+8(FP), SI
 
-	VMOVDQU	bswap32<>(SB), X11
 	VMOVDQU	const85d<>(SB), X12
 	VMOVDQU	widen0<>(SB), X13
 	VMOVDQU	maskEven<>(SB), X14
@@ -274,7 +274,7 @@ dec_loop:
 	CHAR_TO_DIGIT(X0)
 	CHAR_TO_DIGIT(X4)
 
-	// Deinterleave: extract d0-d3 and d4 from stride-5 layout
+	// Deinterleave: extract d0-d3 and d4 from stride-5 layout (LSB digit first)
 	VPSHUFB	decShufMain<>(SB), X0, X5
 	VPSHUFB	decShufFill<>(SB), X4, X6
 	VPOR	X5, X6, X5              // d0-d3 transposed
@@ -321,10 +321,7 @@ dec_loop:
 	VSHUFPS	$0x88, X3, X2, X0       // [lo0, lo2, lo1, lo3]
 	VPSHUFD	$0xD8, X0, X0           // [lo0, lo1, lo2, lo3]
 
-	// Byte-swap to big-endian
-	VPSHUFB	X11, X0, X0
-
-	// Store 16 output bytes
+	// Store 16 output bytes (native little-endian)
 	VMOVDQU	X0, (DI)
 
 	ADDQ	$20, SI

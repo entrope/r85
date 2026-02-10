@@ -94,53 +94,48 @@ func Encode(dst, src []byte) int {
 	// Process full 4-byte blocks.
 	for si+4 <= len(src) {
 		if di+5 > len(dst) {
-			return len(dst)
+			return di
 		}
-		acc := uint32(src[si])<<24 | uint32(src[si+1])<<16 | uint32(src[si+2])<<8 | uint32(src[si+3])
-		dst[di+4] = encByte(byte(acc % 85))
-		acc /= 85
-		dst[di+3] = encByte(byte(acc % 85))
-		acc /= 85
-		dst[di+2] = encByte(byte(acc % 85))
+		acc := uint32(src[si]) | uint32(src[si+1])<<8 | uint32(src[si+2])<<16 | uint32(src[si+3])<<24
+		dst[di+0] = encByte(byte(acc % 85))
 		acc /= 85
 		dst[di+1] = encByte(byte(acc % 85))
 		acc /= 85
-		dst[di+0] = encByte(byte(acc))
+		dst[di+2] = encByte(byte(acc % 85))
+		acc /= 85
+		dst[di+3] = encByte(byte(acc % 85))
+		acc /= 85
+		dst[di+4] = encByte(byte(acc))
 		di += 5
 		si += 4
 	}
 
 	// Handle trailing 1–3 bytes.
-	switch len(src) - si {
+	res := len(src) - si
+	if res != 0 && di+res+1 > len(dst) {
+		return di
+	}
+	switch res {
 	case 1:
-		if di+2 > len(dst) {
-			return len(dst)
-		}
 		acc := uint32(src[si])
-		dst[di+1] = encByte(byte(acc % 85))
-		dst[di+0] = encByte(byte(acc / 85))
+		dst[di+0] = encByte(byte(acc % 85))
+		dst[di+1] = encByte(byte(acc / 85))
 		di += 2
 	case 2:
-		if di+3 > len(dst) {
-			return len(dst)
-		}
-		acc := uint32(src[si])<<8 | uint32(src[si+1])
-		dst[di+2] = encByte(byte(acc % 85))
+		acc := uint32(src[si]) | uint32(src[si+1])<<8
+		dst[di+0] = encByte(byte(acc % 85))
 		acc /= 85
 		dst[di+1] = encByte(byte(acc % 85))
-		dst[di+0] = encByte(byte(acc / 85))
+		dst[di+2] = encByte(byte(acc / 85))
 		di += 3
 	case 3:
-		if di+4 > len(dst) {
-			return len(dst)
-		}
-		acc := uint32(src[si])<<16 | uint32(src[si+1])<<8 | uint32(src[si+2])
-		dst[di+3] = encByte(byte(acc % 85))
-		acc /= 85
-		dst[di+2] = encByte(byte(acc % 85))
+		acc := uint32(src[si]) | uint32(src[si+1])<<8 | uint32(src[si+2])<<16
+		dst[di+0] = encByte(byte(acc % 85))
 		acc /= 85
 		dst[di+1] = encByte(byte(acc % 85))
-		dst[di+0] = encByte(byte(acc / 85))
+		acc /= 85
+		dst[di+2] = encByte(byte(acc % 85))
+		dst[di+3] = encByte(byte(acc / 85))
 		di += 4
 	}
 
@@ -218,20 +213,20 @@ func Decode(dst, src []byte) (ndst, nsrc int, err error) {
 
 		// Full 5-character block -> 4 bytes.
 		if di+4 > len(dst) {
-			return len(dst), si, nil
+			return di, si, nil
 		}
 		// Use uint64 because 85^5 = 4,437,053,125 > 2^32.
-		acc := uint64(block[0])*85 + uint64(block[1])
+		acc := uint64(block[4])*85 + uint64(block[3])
 		acc = acc*85 + uint64(block[2])
-		acc = acc*85 + uint64(block[3])
-		acc = acc*85 + uint64(block[4])
+		acc = acc*85 + uint64(block[1])
+		acc = acc*85 + uint64(block[0])
 		if acc > 0xFFFFFFFF {
 			return di, si, CorruptInputError{"value overflow in 5-character block"}
 		}
-		dst[di+0] = byte(acc >> 24)
-		dst[di+1] = byte(acc >> 16)
-		dst[di+2] = byte(acc >> 8)
-		dst[di+3] = byte(acc)
+		dst[di+0] = byte(acc)
+		dst[di+1] = byte(acc >> 8)
+		dst[di+2] = byte(acc >> 16)
+		dst[di+3] = byte(acc >> 24)
 		di += 4
 		bi = 0
 	}
@@ -244,9 +239,9 @@ func Decode(dst, src []byte) (ndst, nsrc int, err error) {
 		return di, si, CorruptInputError{"incomplete block: single trailing character"}
 	case 2: // 2 chars -> 1 byte
 		if di+1 > len(dst) {
-			return len(dst), si, nil
+			return di, si, nil
 		}
-		acc := uint32(block[0])*85 + uint32(block[1])
+		acc := uint32(block[1])*85 + uint32(block[0])
 		if acc > 0xFF {
 			return di, si, CorruptInputError{"value overflow in trailing block"}
 		}
@@ -254,26 +249,26 @@ func Decode(dst, src []byte) (ndst, nsrc int, err error) {
 		di++
 	case 3: // 3 chars -> 2 bytes
 		if di+2 > len(dst) {
-			return len(dst), si, nil
+			return di, si, nil
 		}
-		acc := (uint32(block[0])*85+uint32(block[1]))*85 + uint32(block[2])
+		acc := (uint32(block[2])*85+uint32(block[1]))*85 + uint32(block[0])
 		if acc > 0xFFFF {
 			return di, si, CorruptInputError{"value overflow in trailing block"}
 		}
-		dst[di+0] = byte(acc >> 8)
-		dst[di+1] = byte(acc)
+		dst[di+0] = byte(acc)
+		dst[di+1] = byte(acc >> 8)
 		di += 2
 	case 4: // 4 chars -> 3 bytes
 		if di+3 > len(dst) {
-			return len(dst), si, nil
+			return di, si, nil
 		}
-		acc := ((uint32(block[0])*85+uint32(block[1]))*85+uint32(block[2]))*85 + uint32(block[3])
+		acc := ((uint32(block[3])*85+uint32(block[2]))*85+uint32(block[1]))*85 + uint32(block[0])
 		if acc > 0xFFFFFF {
 			return di, si, CorruptInputError{"value overflow in trailing block"}
 		}
-		dst[di+0] = byte(acc >> 16)
+		dst[di+0] = byte(acc)
 		dst[di+1] = byte(acc >> 8)
-		dst[di+2] = byte(acc)
+		dst[di+2] = byte(acc >> 16)
 		di += 3
 	}
 
