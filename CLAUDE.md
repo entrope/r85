@@ -14,6 +14,11 @@ Module path: `github.com/entrope/r85`
 - Run a specific benchmark: `go test -bench=BenchmarkEncode -benchmem ./...`
 - Verify generic fallback: `go test -tags purego ./...`
 - Vet for another arch: `GOARCH=amd64 go vet ./...`
+- Build gen tool: `go build ./gen`
+- Run gen tests: `go test ./gen`
+- Run gen smoke tests: `bash gen/gen_test.sh`
+- Generate a random ID: `go run ./gen`
+- Generate 10 sequential UUID v7s: `go run ./gen -uuid v7 -n 10 -seq`
 
 ## Code Structure
 
@@ -32,6 +37,11 @@ Single-package library:
 ### Tests
 - `r85_test.go` — Unit tests (21 tests)
 - `r85_bench_test.go` — Benchmarks across various payload sizes and chunking strategies
+
+### CLI utility
+- `gen/main.go` — Generates random IDs in r85 encoding; supports 96-bit (default), UUID v4, UUID v7. Flags: `-n` (count), `-uuid` (v4/v7), `-seq` (sequential from random base)
+- `gen/main_test.go` — Unit tests for ID generation functions
+- `gen/gen_test.sh` — Shell-based smoke tests
 
 ## Key Design Details
 
