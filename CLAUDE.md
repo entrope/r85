@@ -14,10 +14,11 @@ Module path: `github.com/entrope/r85`
 - Run a specific benchmark: `go test -bench=BenchmarkEncode -benchmem ./...`
 - Verify generic fallback: `go test -tags purego ./...`
 - Vet for another arch: `GOARCH=amd64 go vet ./...`
+- Smoke-test `gen` utility: `sh gen/test.sh`
 
 ## Code Structure
 
-Single-package library:
+Single-package library, plus a `gen` command-line utility:
 
 ### Core files
 - `r85.go` — Encoding/decoding logic: `Encode`, `Decode`, `EncodeToString`, `DecodeString`, streaming `NewEncoder`/`NewDecoder`, lookup tables, `CorruptInputError`, `allValidR85` helper, SIMD dispatch entry points
@@ -28,6 +29,10 @@ Single-package library:
 - `r85_amd64.go` — `const haveSIMD = true`; `var haveAVX512` (runtime via `golang.org/x/sys/cpu`); AVX2/AVX-512 asm stubs; `encodeBlocksSIMD`/`decodeBlocksSIMD` dispatch
 - `r85_amd64.s` — AVX2 assembly: `encodeBlocksAVX2` (YMM), `decodeBlocksAVX2` (XMM); AVX-512 stubs (TODO)
 - `r85_noasm.go` — `const haveSIMD = false`; no-op stubs for other architectures or `purego` builds
+
+### Command-line utility
+- `gen/main.go` — `gen` command: generates random IDs (96-bit default, UUID v4, UUID v7) and prints them in r85 encoding. Flags: `-n`, `-v4`, `-v7`, `-seq`
+- `gen/test.sh` — Smoke tests for `gen` (output lengths, counts, sequential prefix stability, distinctness, error cases)
 
 ### Tests
 - `r85_test.go` — Unit tests (21 tests)
